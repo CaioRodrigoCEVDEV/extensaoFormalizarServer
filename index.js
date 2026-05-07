@@ -1,11 +1,46 @@
 const express = require('express');
 const cors = require('cors');
+const rateLimit = require('express-rate-limit');
 require('dotenv').config();
 
 const app = express();
-const port = process.env.Port || 3000;
+const port = process.env.PORT || process.env.Port || 3000;
+
+app.set('trust proxy', Number(process.env.TRUST_PROXY || 1));
+
+function parsePositiveInteger(value, fallback) {
+    const parsed = Number.parseInt(value, 10);
+
+    return Number.isInteger(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+const rateLimitHandler = (req, res, next, options) => {
+    res.status(options.statusCode).json({
+        success: false,
+        error: 'Muitas requisições. Tente novamente em alguns minutos.'
+    });
+};
+
+const apiLimiter = rateLimit({
+    windowMs: parsePositiveInteger(process.env.RATE_LIMIT_WINDOW_MINUTES, 15) * 60 * 1000,
+    limit: parsePositiveInteger(process.env.RATE_LIMIT_MAX_REQUESTS, 100),
+    standardHeaders: true,
+    legacyHeaders: false,
+    skip: (req) => req.method === 'OPTIONS',
+    handler: rateLimitHandler
+});
+
+const rewriteLimiter = rateLimit({
+    windowMs: parsePositiveInteger(process.env.REWRITE_RATE_LIMIT_WINDOW_MINUTES, 15) * 60 * 1000,
+    limit: parsePositiveInteger(process.env.REWRITE_RATE_LIMIT_MAX_REQUESTS, 20),
+    standardHeaders: true,
+    legacyHeaders: false,
+    skip: (req) => req.method === 'OPTIONS',
+    handler: rateLimitHandler
+});
 
 app.use(cors());
+app.use(apiLimiter);
 app.use(express.json({ limit: '1mb' }));
 
 async function sendToOpenAI(text) {
@@ -67,7 +102,7 @@ async function sendToOpenAI(text) {
     return data.choices[0].message.content.trim();
 }
 
-app.post('/rewrite', async (req, res) => {
+app.post('/rewrite', rewriteLimiter, async (req, res) => {
 
     try {
 
